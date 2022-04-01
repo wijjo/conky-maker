@@ -1,0 +1,35 @@
+{
+  "window_width_min": 200,
+  "window_height_min": 780,
+  "window_outer_margin": 10,
+  "window_gap": 12,
+  "meter_width": 200,
+  "meter_height": 25,
+  "bar_width": 200,
+  "bar_height": 10,
+  "placement": "top_right",
+  "refresh_interval": 10,
+  "temperature_check_interval": 30,
+  "network_check_interval": 1800,
+  "cpu_top_processes": 5,
+  "memory_top_processes": 3,
+  "filesystems": [
+    {
+      "device": "sda5",
+      "mountpoint": "/"
+    }
+  ],
+  "networks": [
+    {
+      "device": "eno1"
+    }
+  ],
+  "cpus": [
+    {
+      "cpu_number": 0,
+      "label": "all",
+      "sensor_search_text": "Package id 0",
+      "sensor_field_number": 4
+    }
+  ]
+}
