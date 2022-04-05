@@ -1,24 +1,20 @@
 {
-  "window_width_min": 200,
-  "window_height_min": 780,
-  "window_outer_margin": 10,
-  "window_gap": 12,
-  "meter_width": 200,
-  "meter_height": 25,
-  "bar_width": 200,
-  "bar_height": 10,
-  "placement": "top_right",
-  "refresh_interval": 10,
-  "temperature_check_interval": 30,
-  "network_check_interval": 1800,
-  "cpu_top_processes": 5,
-  "memory_top_processes": 3,
-  "filesystems": [
-    {
-      "device": "sda5",
-      "mountpoint": "/"
-    }
-  ],
+  "geometry": {
+    "placement": "top_right",
+    "width_min": 200,
+    "height_min": 780,
+    "outer_margin": 10,
+    "gap": 12
+  },
+  "timings": {
+    "refresh": 10,
+    "temperature_check": 30,
+    "network_check": 1800
+  },
+  "processes": {
+    "top_cpu_count": 5,
+    "top_memory_count": 3
+  },
   "networks": [
     {
       "device": "eno1"
@@ -30,6 +26,12 @@
       "label": "all",
       "sensor_search_text": "Package id 0",
       "sensor_field_number": 4
+    }
+  ],
+  "filesystems": [
+    {
+      "device": "sda5",
+      "mountpoint": "/"
     }
   ]
 }

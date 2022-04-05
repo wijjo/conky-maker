@@ -21,9 +21,8 @@ import argparse
 import os
 import re
 import sys
-import dataclasses
 from importlib.util import spec_from_file_location, module_from_spec
-from typing import Any, List, Union, Tuple, Iterator, Optional
+from typing import Any, List, Union, Tuple, Iterator, Optional, Dict
 
 FONT_COLOR_REGEX = re.compile(r'[$]([{]?)(color|font)([^{]*[}]|\b)')
 
@@ -60,6 +59,21 @@ BASE_CONFIGURATION = dict(
     default_shade_color='black',
 )
 
+DEFAULT_EXTERNAL_COMMAND_INTERVAL = 3600
+DEFAULT_COLOR = 'ffffff'
+DEFAULT_COLOR_OUTLINE = '808080'
+DEFAULT_METER_WIDTH = 100
+DEFAULT_METER_HEIGHT = 25
+DEFAULT_BAR_WIDTH = 100
+DEFAULT_BAR_HEIGHT = 10
+DEFAULT_FONT = 'FreeSans:size=12'
+DEFAULT_PLACEMENT = 'top_left'
+DEFAULT_WINDOW_WIDTH_MIN = 200
+DEFAULT_WINDOW_HEIGHT_MIN = 500
+DEFAULT_WINDOW_OUTER_MARGIN = 20
+DEFAULT_WINDOW_GAP = 10
+DEFAULT_REFRESH_INTERVAL = 1
+
 
 def abort(message: Any):
     """
@@ -70,23 +84,6 @@ def abort(message: Any):
     sys.stderr.write(f'ERROR: {message}{os.linesep}')
     sys.exit(1)
 
-
-def flatten_strings(item: Any) -> Iterator:
-    """
-    Recursively process a string sequence hierarchy to produce a flat iterable.
-    :param item: string item or sequence
-    :return: flat string iterator
-    """
-    if isinstance(item, (list, tuple)):
-        for sub_item in item:
-            for flattened_sub_item in flatten_strings(sub_item):
-                yield flattened_sub_item
-    else:
-        yield item
-
-
-# Type for a line string or line string hierarchy.
-LinesTree = Union[str, Tuple[str], List[str], Tuple['LinesTree'], List['LinesTree']]
 
 # ConfigDict item type, which may be part of a recursive structure.
 ConfigDictItem = Union['ConfigDict', List['ConfigDictItem'], Any]
@@ -124,6 +121,8 @@ class ConfigDict(dict):
     @classmethod
     def _wrap_data(cls, data: Any) -> ConfigDictItem:
         # Wrap item as ConfigDict or list of wrapped items.
+        if data is None:
+            return cls({})
         if isinstance(data, dict):
             return cls(data)
         if isinstance(data, list):
@@ -131,116 +130,119 @@ class ConfigDict(dict):
         return data
 
 
-@dataclasses.dataclass
-class ConkyFormatterParameters:
-    """Conky formatter parameters."""
-    placement: str = None
-    color_default: str = None
-    color_outline: str = None
-    color_graph_border: str = None
-    color_heading: str = None
-    color_label: str = None
-    color_data: str = None
-    color_time: str = None
-    color_date: str = None
-    color_cpu: str = None
-    color_memory: str = None
-    color_filesystem: str = None
-    font_default: str = None
-    font_heading: str = None
-    font_label: str = None
-    font_data: str = None
-    font_time: str = None
-    font_date: str = None
-    format_time: str = None
-    format_date: str = None
-    meter_width: int = None
-    meter_height: int = None
-    bar_width: int = None
-    bar_height: int = None
-    interval_refresh: int = None
-    interval_network_check: int = None
-    interval_temperature_check: int = None
-    window_width_min: int = None
-    window_height_min: int = None
-    window_outer_margin: int = None
-    window_gap: int = None
+class ConkyMaker:
+    """
+    Conky configuration generator.
 
+    Modules must provide a concrete class named "Maker".
 
-# Default formatter parameters.
-DEFAULT_FORMATTER_PARAMETERS = ConkyFormatterParameters(
-    placement='top_left',
-    color_default='000000',
-    color_outline='808080',
-    color_graph_border='808080',
-    color_heading='000000',
-    color_label='000000',
-    color_data='000000',
-    color_time='000000',
-    color_date='000000',
-    color_cpu='000000',
-    color_memory='000000',
-    color_filesystem='000000',
-    font_default='FreeSans:size=10',
-    font_heading='FreeSans:size=11',
-    font_label='FreeSans:size=9',
-    font_data='FreeMono-Bold:size=9',
-    font_time='FreeMono-Bold:size=44',
-    font_date='FreeSans:size=14',
-    format_time='%H:%M',
-    format_date='%c',
-    meter_width=100,
-    meter_height=30,
-    bar_width=100,
-    bar_height=10,
-    interval_refresh=1,
-    interval_network_check=3600,
-    interval_temperature_check=600,
-    window_width_min=200,
-    window_height_min=500,
-    window_outer_margin=20,
-    window_gap=20,
-)
-
-
-class ConkyFormatter:
-    """Conky formatter maps method calls to $xxx Conky macros."""
+    Must be subclassed in order to provide a render() implementation.
+    """
 
     def __init__(self, parameters: ConfigDict):
         """
-        ConkyFormatter constructor.
+        ConkyMaker constructor.
 
-        :param parameters: initial parameters to selectively override defaults
+        :param parameters: parameters loaded from data file
         """
-        self.parameters = dataclasses.replace(DEFAULT_FORMATTER_PARAMETERS)
-        self.set_parameters(
-            ConkyFormatterParameters(
-                placement=parameters.placement,
-                meter_width=parameters.meter_width,
-                meter_height=parameters.meter_height,
-                bar_width=parameters.bar_width,
-                bar_height=parameters.bar_height,
-                interval_refresh=parameters.refresh_interval,
-                interval_network_check=parameters.network_check_interval,
-                interval_temperature_check=parameters.temperature_check_interval,
-                window_width_min=parameters.window_width_min,
-                window_height_min=parameters.window_height_min,
-                window_outer_margin=parameters.window_outer_margin,
-                window_gap=parameters.window_gap,
-            )
-        )
-        self.conky_text_lines: List[str] = []
+        self.parameters = parameters
+        self.lines: List[str] = []
+        self.colors: Dict[str, str] = {}
+        self.fonts: Dict[str, str] = {}
+        self.placement: str = DEFAULT_PLACEMENT
+        self.window_width_min: int = DEFAULT_WINDOW_WIDTH_MIN
+        self.window_height_min: int = DEFAULT_WINDOW_HEIGHT_MIN
+        self.window_outer_margin: int = DEFAULT_WINDOW_OUTER_MARGIN
+        self.window_gap: int = DEFAULT_WINDOW_GAP
+        self.refresh_interval: int = DEFAULT_REFRESH_INTERVAL
+        self.default_color: str = DEFAULT_COLOR
+        self.default_color_outline: str = DEFAULT_COLOR_OUTLINE
+        self.default_font: str = DEFAULT_FONT
 
-    def set_parameters(self, parameters: ConkyFormatterParameters):
+    def configure_conky(self,
+                        placement: str = None,
+                        window_width_min: int = None,
+                        window_height_min: int = None,
+                        window_outer_margin: int = None,
+                        window_gap: int = None,
+                        refresh_interval: int = None,
+                        default_color: str = None,
+                        default_color_outline: str = None,
+                        default_font: str = None,
+                        ):
         """
-        Selectively override parameters.
+        Configure Conky configuration options.
 
-        :param parameters: override parameters (the ones that are not None)
+        :param placement: optional placement override
+        :param window_width_min: optional minimum window width override
+        :param window_height_min: optional minimum window height override
+        :param window_outer_margin: optional window margin override
+        :param window_gap: optional window gap override
+        :param refresh_interval: optional refresh interval override
+        :param default_color: optional default color override
+        :param default_color_outline: optional default color_outline override
+        :param default_font: optional default font override
         """
-        for field in dataclasses.fields(self.parameters):
-            value = getattr(parameters, field.name)
-            if value is not None:
-                setattr(self.parameters, field.name, value)
+        if placement is not None:
+            self.placement = placement
+        if window_width_min is not None:
+            self.window_width_min = window_width_min
+        if window_height_min is not None:
+            self.window_height_min = window_height_min
+        if window_outer_margin is not None:
+            self.window_outer_margin = window_outer_margin
+        if window_gap is not None:
+            self.window_gap = window_gap
+        if refresh_interval is not None:
+            self.refresh_interval = refresh_interval
+        if default_color is not None:
+            self.default_color = default_color
+        if default_color_outline is not None:
+            self.default_color_outline = default_color_outline
+        if default_font is not None:
+            self.default_font = default_font
+
+    def color_theme(self, colors: Dict[str, str]):
+        """
+        Set or update color theme.
+
+        :param colors: color name to string mappings
+        """
+        self.colors.update(colors)
+
+    def font_theme(self, fonts: Dict[str, str]):
+        """
+        Set or update font theme.
+
+        :param fonts: font name to string mappings
+        """
+        self.fonts.update(fonts)
+
+    def line(self, *fields: str):
+        """
+        Add a complete line, given some fields.
+
+        Automatically adds macros as needed to clear a changed color or font.
+
+        :param fields: field strings
+        """
+        fields = list(fields)
+        changed_color = changed_font = False
+        for field in fields:
+            for font_color_change in FONT_COLOR_REGEX.finditer(field):
+                if font_color_change.group(2) == 'color':
+                    changed_color = font_color_change.group(3) not in ('', '}')
+                elif font_color_change.group(2) == 'font':
+                    changed_font = font_color_change.group(3) not in ('', '}')
+        if changed_color:
+            fields.append(self.color_clear())
+        if changed_font:
+            fields.append(self.font_clear())
+        self.lines.append(''.join(fields))
+
+    def render(self):
+        """Required render override."""
+        raise NotImplementedError
 
     @staticmethod
     def text(value: Any) -> str:
@@ -252,68 +254,100 @@ class ConkyFormatter:
         """
         return str(value)
 
-    @staticmethod
-    def color(color_spec: Union[str, int] = None) -> str:
+    def color(self, color_spec: Optional[str]) -> str:
         """
-        Inject ${color...) to set a color or ${color} to restore default.
+        Inject ${color #XXXXXX) hex color macro.
 
-        :param color_spec: color number (0-9) or string value, clears color if missing
+        Returns '' if color_spec is None.
+
+        :param color_spec: hex color string without leading '#', named theme
+                           color, or None if no color change is needed
         :return: output string
         """
+        if color_spec in self.colors:
+            color_spec = self.colors[color_spec]
         if color_spec is None:
-            return '${color}'
-        if isinstance(color_spec, int):
-            return '${color%d}' % color_spec
+            return ''
         return '${color #%s}' % color_spec
 
     @staticmethod
-    def font(font_spec: str = None) -> str:
+    def color_index(index: int) -> str:
+        """
+        Inject ${colorN) to set a color by index number.
+
+        :param index: color index (0-9)
+        :return: output string
+        """
+        return '${color%d}' % index
+
+    @staticmethod
+    def color_clear() -> str:
+        """
+        Inject ${color} to restore default.
+
+        :return: output string
+        """
+        return '${color}'
+
+    def font(self, font_spec: Optional[str]) -> str:
         """
         Inject ${font...) to set a font or ${font} to restore default.
 
-        :param font_spec: font specification string - clears font if missing
+        :param font_spec: font specification, theme font name, or None if no
+                          font change is needed
         :return: output string
         """
+        if font_spec in self.fonts:
+            font_spec = self.fonts[font_spec]
         if font_spec is None:
-            return '${font}'
+            return ''
         return '${font %s}' % font_spec
+
+    @staticmethod
+    def font_clear() -> str:
+        """
+        Inject ${font} to restore default.
+
+        :return: output string
+        """
+        return '${font}'
 
     @staticmethod
     def center() -> str:
         """
-        Inject centering ($alignc) for subsequent items of current line.
+        Inject centering (${alignc}) for subsequent items of current line.
 
         :return: output string
         """
-        return '$alignc'
+        return '${alignc}'
 
     @staticmethod
     def right() -> str:
         """
-        Inject right-justification ($alignr) for subsequent items of current line.
+        Inject right-justification (${alignr}) for subsequent items of current line.
 
         :return: output string
         """
-        return '$alignr'
+        return '${alignr}'
 
     @staticmethod
-    def time(time_format: str) -> str:
+    def time_date(time_date_format: str) -> str:
         """
-        Inject time (${time...}).
+        Inject time/date (${time...}).
 
-        :param time_format: strftime-style time format string
+        :param time_date_format: strftime-style time/date format string
         :return: output string
         """
-        return '${time %s}' % time_format
+        return '${time %s}' % time_date_format
 
     @staticmethod
     def horizontal_rule() -> str:
         """
-        Inject horizontal rule ($hr).
+        Inject horizontal rule (${hr}).
 
         :return: output string
         """
-        return '$hr'
+        return '${hr}'
 
     @staticmethod
     def offset(x: int = None, y: int = None) -> str:
@@ -333,93 +367,114 @@ class ConkyFormatter:
 
     def meter(self,
               graph_type: str,
-              color: str,
-              width: int,
-              height: int,
+              width: int = None,
+              height: int = None,
               param: str = None,
+              graph_color1: str = None,
+              graph_color2: str = None,
+              border_color: str = None,
               ) -> str:
         """
         Inject meter (${...graph...}).
 
         :param graph_type: Conky graph type name, e.g. "cpugraph", "diskiograph"...
-        :param color: graph color
-        :param width: graph width
-        :param height: graph height
+        :param width: optional graph width
+        :param height: optional graph height
         :param param: optional graph parameter (varies by graph type)
+        :param graph_color1: optional graph gradient color #1
+        :param graph_color2: optional graph gradient color #2
+        :param border_color: optional border color
         :return: output string
         """
-        return '${color #%s}${%s%s %d,%d %s %s}' % (
-            self.parameters.color_graph_border,
-            graph_type,
-            f' {param}' if param else '',
-            height, width,
-            color, color)
+        param_string = f' {param}' if param else ''
+        if graph_color1:
+            if graph_color2:
+                graph_color_string = f' {graph_color1} {graph_color2}'
+            else:
+                graph_color_string = f' {graph_color1}'
+        elif graph_color2:
+            graph_color_string = f' {graph_color2}'
+        else:
+            graph_color_string = ''
+        return '%s${%s%s %d,%d%s}' % (self.color(border_color),
+                                      graph_type,
+                                      param_string,
+                                      height or DEFAULT_METER_HEIGHT,
+                                      width or DEFAULT_METER_WIDTH,
+                                      graph_color_string)
 
-    @staticmethod
-    def bar(bar_type: str,
-            color: str,
-            width: int,
-            height: int,
+    def bar(self,
+            bar_type: str,
+            width: int = None,
+            height: int = None,
+            color: str = None,
             param: str = None,
             ) -> str:
         """
         Inject horizontal bar meter (${...bar...}).
 
         :param bar_type: Conky bar type name, e.g. "membar", "fs_bar"...
-        :param color: bar color
-        :param width: bar width
-        :param height: bar height
+        :param width: optional bar width
+        :param height: optional bar height
+        :param color: optional bar color
         :param param: optional bar parameter (varies by bar type)
         :return: output string
         """
-        return '${color #%s}${%s %d,%d%s}' % (
-            color,
-            bar_type,
-            height, width,
-            f' {param}' if param else '')
+        param_string = f' {param}' if param else ''
+        return '%s${%s %d,%d%s}' % (self.color(color),
+                                    bar_type,
+                                    height or DEFAULT_BAR_HEIGHT,
+                                    width or DEFAULT_BAR_WIDTH,
+                                    param_string)
 
     @staticmethod
     def exec(command: str, interval: int = None) -> str:
         """
         Inject output of external command (${exec...} or ${execi...}).
 
+        Throttled if interval is not specified or > 0.
+
+        If interval is explicitly zero it always runs during Conky refresh.
+
         :param command: external command
         :param interval: optional interval for throttling frequency of expensive command
         :return: output string
         """
-        if interval is not None:
-            return '${execi %d %s}' % (interval, command)
-        return '${exec %s}' % command
+        if interval == 0:
+            return '${exec %s}' % command
+        if interval is None:
+            interval = DEFAULT_EXTERNAL_COMMAND_INTERVAL
+        return '${execi %d %s}' % (interval, command)
 
     @staticmethod
     def host_name() -> str:
         """
-        Inject host name ($nodename).
+        Inject host name (${nodename}).
 
         :return: output string
         """
-        return '$nodename'
+        return '${nodename}'
 
     @staticmethod
     def kernel() -> str:
         """
-        Inject Linux kernel name ($kernel).
+        Inject Linux kernel name (${kernel}).
 
         :return: output string
         """
-        return '$kernel'
+        return '${kernel}'
 
     @staticmethod
     def uptime(short: bool = False) -> str:
         """
-        Inject uptime ($uptime or $uptime_short).
+        Inject uptime (${uptime} or ${uptime_short}).
 
         :param short: provide short form if set and True
         :return: output string
         """
         if short:
-            return '$uptime_short'
-        return '$uptime'
+            return '${uptime_short}'
+        return '${uptime}'
 
     @staticmethod
     def ip_address(device: str) -> str:
@@ -431,29 +486,31 @@ class ConkyFormatter:
         """
         return '${addr %s}' % device
 
-    def mac_address(self, device: str) -> str:
+    def mac_address(self, device: str, check_interval: int = None) -> str:
         """
         Inject MAC address of network device.
 
         Throttled by "interval_network_check" parameter.
 
         :param device: network device name
+        :param check_interval: optional check interval
         :return: output string
         """
         return self.exec("ip addr show dev %s | awk '/link\\/ether/{print $2}'" % device,
-                         interval=self.parameters.interval_network_check)
+                         interval=check_interval)
 
-    def external_ip(self) -> str:
+    def external_ip(self, check_interval: int = None) -> str:
         """
         Inject external IP address.
 
         Throttled by both the "interval_network_check" parameter and a 4 hour
         cache frequency.
 
+        :param check_interval: optional check interval
         :return: output string
         """
         return self.exec(f'bash -c "{EXTERNAL_IP_COMMAND}"',
-                         interval=self.parameters.interval_network_check)
+                         interval=check_interval)
 
     @staticmethod
     def cpu_percent(cpu_number: int) -> str:
@@ -465,13 +522,14 @@ class ConkyFormatter:
         """
         return '${cpu cpu %s}%%' % cpu_number
 
-    def cpu_temperature(self, cpu_number: int) -> str:
+    def cpu_temperature(self, cpu_number: int, check_interval: int = None) -> str:
         """
         Inject CPU temperature (Celsius).
 
         Throttled by "interval_temperature_check" parameter.
 
         :param cpu_number: CPU number
+        :param check_interval: optional check interval
         :return: output string
         """
         if cpu_number == 0:
@@ -480,17 +538,18 @@ class ConkyFormatter:
         else:
             search_text = f'Core {cpu_number}:'
             field_number = 3
-        return self.exec("sensors | awk '/%s/{print int($%d)}'" % (search_text, field_number),
-                         interval=self.parameters.interval_temperature_check) + ' C'
+        return self.exec("sensors | awk '/%s/{print int($%d)}'"
+                         % (search_text, field_number),
+                         interval=check_interval) + ' C'
 
     @staticmethod
     def cpu_frequency() -> str:
         """
-        Inject CPU frequency as GHz ($freq_g).
+        Inject CPU frequency as GHz (${freq_g}).
 
         :return: output string
         """
-        return '$freq_g GHz'
+        return '${freq_g} GHz'
 
     @staticmethod
     def cpu_top_name(top_number: int) -> str:
@@ -512,30 +571,68 @@ class ConkyFormatter:
         """
         return '${top cpu %d}%%' % top_number
 
-    def cpu_meter(self, cpu_number: int) -> str:
+    def cpu_meter(self,
+                  cpu_number: int,
+                  width: int = None,
+                  height: int = None,
+                  graph_color1: str = None,
+                  graph_color2: str = None,
+                  border_color: str = None,
+                  ) -> str:
         """
         Inject CPU meter (${cpugraph...}).
 
-        Color and size are determined by the "color_cpu", "meter_width", and
-        "meter_height" parameters.
-
         :param cpu_number: CPU number
+        :param width: optional graph width
+        :param height: optional graph height
+        :param graph_color1: optional graph gradient color #1
+        :param graph_color2: optional graph gradient color #2
+        :param border_color: optional border color
         :return: output string
         """
         return self.meter('cpugraph',
-                          self.parameters.color_cpu,
-                          self.parameters.meter_width,
-                          self.parameters.meter_height,
-                          param=f'cpu{cpu_number}')
+                          width=width,
+                          height=height,
+                          param=f'cpu{cpu_number}',
+                          graph_color1=graph_color1,
+                          graph_color2=graph_color2,
+                          border_color=border_color)
 
     @staticmethod
-    def memory_usage() -> str:
+    def memory_used() -> str:
+        """
+        Inject memory used.
+
+        :return: output string
+        """
+        return '${mem}'
+
+    @staticmethod
+    def memory_maximum() -> str:
+        """
+        Inject maximum memory available.
+
+        :return: output string
+        """
+        return '${memmax}'
+
+    @staticmethod
+    def memory_percent() -> str:
+        """
+        Inject memory percent used.
+
+        :return: output string
+        """
+        return '${memperc}%'
+
+    @staticmethod
+    def memory_usage_triplet() -> str:
         """
         Inject slash-separated memory (used, maximum, percent) triplet.
 
         :return: output string
         """
-        return '$mem / $memmax / $memperc%'
+        return '${mem} / ${memmax} / ${memperc}%'
 
     @staticmethod
     def memory_top_name(top_number: int) -> str:
@@ -557,41 +654,98 @@ class ConkyFormatter:
         """
         return '${top_mem mem %d}%%' % top_number
 
-    def memory_bar(self) -> str:
+    def memory_bar(self,
+                   width: int = None,
+                   height: int = None,
+                   color: str = None,
+                   ) -> str:
         """
         Inject memory usage bar (${membar...}).
 
-        Color and size are determined by the "color_memory", "bar_width", and
-        "bar_height" parameters.
+        :param width: optional width
+        :param height: optional height
+        :param color: optional color
+        :return: output string
+        """
+        return self.bar('membar', width=width, height=height, color=color)
+
+    @staticmethod
+    def swap_used() -> str:
+        """
+        Inject swap space used.
 
         :return: output string
         """
-        return self.bar('membar',
-                        self.parameters.color_memory,
-                        self.parameters.bar_width,
-                        self.parameters.bar_height)
+        return '${swap}'
 
     @staticmethod
-    def swap_usage() -> str:
+    def swap_maximum() -> str:
+        """
+        Inject maximum swap space available.
+
+        :return: output string
+        """
+        return '${swapmax}'
+
+    @staticmethod
+    def swap_percent() -> str:
+        """
+        Inject swap space percent used.
+
+        :return: output string
+        """
+        return '${swapperc}%'
+
+    @staticmethod
+    def swap_usage_triplet() -> str:
         """
         Inject slash-separated swap space (used, maximum, percent) triplet.
 
         :return: output string
         """
-        return '$swap / $swapmax / $swapperc%'
+        return '${swap} / ${swapmax} / ${swapperc}%'
 
     @staticmethod
-    def filesystem_usage(mountpoint: str) -> str:
+    def filesystem_used(mountpoint: str) -> str:
+        """
+        Inject filesystem space used by mountpoint.
+
+        :param mountpoint: mountpoint path
+        :return: output string
+        """
+        return '${fs_used %s}' % mountpoint
+
+    @staticmethod
+    def filesystem_maximum(mountpoint: str) -> str:
+        """
+        Inject maximum available space filesystem by mountpoint.
+
+        :param mountpoint: mountpoint path
+        :return: output string
+        """
+        return '${fs_size %s}' % mountpoint
+
+    @staticmethod
+    def filesystem_percent(mountpoint: str) -> str:
+        """
+        Inject filesystem space percent used by mountpoint.
+
+        :param mountpoint: mountpoint path
+        :return: output string
+        """
+        return '${fs_used_perc %s}%%' % mountpoint
+
+    @staticmethod
+    def filesystem_usage_triplet(mountpoint: str) -> str:
         """
         Inject slash-separated filesystem (used, maximum, percent) triplet by mountpoint.
 
         :param mountpoint: mountpoint path
         :return: output string
         """
-        return ('${fs_used %(mountpoint)s}'
-                ' / ${fs_size %(mountpoint)s}'
-                ' / ${fs_used_perc %(mountpoint)s}%%'
-                % locals())
+        return (f'${{fs_used {mountpoint}}}'
+                f' / ${{fs_size {mountpoint}}}'
+                f' / ${{fs_used_perc {mountpoint}}}%')
 
     @staticmethod
     def filesystem_io(mountpoint: str) -> str:
@@ -603,269 +757,91 @@ class ConkyFormatter:
         """
         return '${diskio %s}' % mountpoint
 
-    def filesystem_bar(self, mountpoint: str) -> str:
+    def filesystem_bar(self,
+                       mountpoint: str,
+                       color: str = None,
+                       width: int = None,
+                       height: int = None,
+                       ) -> str:
         """
         Inject filesystem usage bar (${fs_bar...}) by mountpoint.
 
-        Color and size are determined by the "color_filesystem", "bar_width",
-        and "bar_height" parameters.
-
         :param mountpoint: mountpoint path
+        :param color: optional color spec
+        :param width: optional width
+        :param height: optional height
         :return: output string
         """
-        return self.bar('fs_bar',
-                        self.parameters.color_filesystem,
-                        self.parameters.bar_width,
-                        self.parameters.bar_height,
-                        param=mountpoint)
+        return self.bar('fs_bar', width=width, height=height, color=color, param=mountpoint)
 
-    def filesystem_io_meter(self, device: str) -> str:
+    def filesystem_io_meter(self,
+                            device: str,
+                            width: int = None,
+                            height: int = None,
+                            graph_color1: str = None,
+                            graph_color2: str = None,
+                            border_color: str = None,
+                            ) -> str:
         """
         Inject filesystem usage bar (${diskiograph...}) by device name.
 
-        Color and size are determined by the "color_filesystem", "meter_width",
-        and "meter_height" parameters.
-
         :param device: filesystem device name
+        :param width: optional graph width
+        :param height: optional graph height
+        :param graph_color1: optional graph gradient color #1
+        :param graph_color2: optional graph gradient color #2
+        :param border_color: optional border color
         :return: output string
         """
         return self.meter('diskiograph',
-                          self.parameters.color_filesystem,
-                          self.parameters.meter_width,
-                          self.parameters.meter_height,
+                          width=width,
+                          height=height,
+                          graph_color1=graph_color1,
+                          graph_color2=graph_color2,
+                          border_color=border_color,
                           param=device)
 
-    @staticmethod
-    def line(*parts: str) -> str:
-        """
-        Inject a full line, including any added macros needed to clear altered color/font.
 
-        :param parts: line parts (strings)
-        :return: output string
-        """
-        changed_color = False
-        changed_font = False
-        for part in parts:
-            for font_color_change in FONT_COLOR_REGEX.finditer(part):
-                if font_color_change.group(2) == 'color':
-                    changed_color = font_color_change.group(3) not in ('', '}')
-                elif font_color_change.group(2) == 'font':
-                    changed_font = font_color_change.group(3) not in ('', '}')
-        line_parts = list(parts)
-        if changed_color:
-            line_parts.append('${color}')
-        if changed_font:
-            line_parts.append('${font}')
-        return ''.join(line_parts)
-
-    def time_line(self) -> str:
-        """
-        Inject a digital clock line.
-
-        Color, font, and format are determined by the "color_time", "font_time",
-        and "format_time" parameters.
-
-        :return: output string
-        """
-        return self.line(
-            self.color(self.parameters.color_time),
-            self.font(self.parameters.font_time),
-            self.center(),
-            self.time(self.parameters.format_time),
-        )
-
-    def date_line(self) -> str:
-        """
-        Inject a date line.
-
-        Color, font, and format are determined by the "color_date", "font_date",
-        and "format_date" parameters.
-
-        :return: output string
-        """
-        return self.line(
-            self.color(self.parameters.color_date),
-            self.font(self.parameters.font_date),
-            self.center(),
-            self.time(str(self.parameters.format_date)),
-        )
-
-    def heading_line(self, heading_text: str) -> str:
-        """
-        Inject a heading line with trailing horizontal rule.
-
-        Color and font are determined by the "color_heading" and "font_heading"
-        parameters.
-
-        :return: output string
-        """
-        return self.line(
-            self.color(self.parameters.color_heading),
-            self.font(self.parameters.font_heading),
-            self.text(heading_text + ' '),
-            self.horizontal_rule(),
-        )
-
-    def name_value_line(self, name: Any, value: Any) -> str:
-        """
-        Inject a name/value pair line.
-
-        Color and font are determined by the "color_label", "color_data",
-        "font_label", and "font_data" parameters.
-
-        :param name: name (label)
-        :param value: value
-        :return: output string
-        """
-        return self.line(
-            self.color(self.parameters.color_label),
-            self.font(self.parameters.font_label),
-            self.text(name),
-            self.color(self.parameters.color_data),
-            self.font(self.parameters.font_data),
-            self.right(),
-            self.text(value),
-        )
-
-    def pair_line(self, value1: Any, value2: Any) -> str:
-        """
-        Inject a data value pair line.
-
-        Color and font are determined by the "color_data" and "font_data"
-        parameters.
-
-        :param value1: value #1
-        :param value2: value #2
-        :return: output string
-        """
-        return self.line(
-            self.color(self.parameters.color_data),
-            self.font(self.parameters.font_data),
-            self.text(value1),
-            self.right(),
-            self.text(value2),
-        )
-
-    def triplet_line(self, value1: Any, value2: Any, value3: Any) -> str:
-        """
-        Inject a data value triplet line.
-
-        Color and font are determined by the "color_data" and "font_data"
-        parameters.
-
-        :param value1: value #1
-        :param value2: value #2
-        :param value3: value #3
-        :return: output string
-        """
-        return self.line(
-            self.color(self.parameters.color_data),
-            self.font(self.parameters.font_data),
-            self.text(value1),
-            self.center(),
-            self.text(value2),
-            self.right(),
-            self.text(value3),
-        )
-
-    @classmethod
-    def centered_line(cls, item: Any) -> str:
-        """
-        Inject a centered line with a single item.
-
-        :param item: data item
-        :return: output string
-        """
-        return cls.line(
-            cls.center(),
-            cls.text(item),
-        )
-
-    def block(self,
-              *lines: LinesTree,
-              heading: str = None,
-              vertical_offset: int = None,
-              ):
-        """
-        Inject a multi-line block with optional heading and vertical offset.
-
-        :param lines: block lines, which are flattened if nested
-        :param heading: optional heading
-        :param vertical_offset: optional vertical offset
-        :return: output string
-        """
-        if self.conky_text_lines:
-            self.conky_text_lines.append('')
-        first_line_index = len(self.conky_text_lines)
-        # conky.line() appends ${color}/${font} as needed to clear temporary changes.
-        if heading is not None:
-            self.conky_text_lines.append(self.line(self.heading_line(heading)))
-        for flattened_line in flatten_strings(lines):
-            self.conky_text_lines.append(self.line(flattened_line))
-        if vertical_offset:
-            self.conky_text_lines[first_line_index] = ''.join([
-                self.offset(y=vertical_offset),
-                self.conky_text_lines[first_line_index]
-            ])
-
-    def conky_config_section(self) -> str:
-        """
-        Generate full Conky configuration section block, including wrapper lines.
-
-        :return: output string
-        """
-        lines: List[str] = []
-        config_dict = dict(
-            BASE_CONFIGURATION,
-            alignment=self.parameters.placement,
-            border_outer_margin=self.parameters.window_outer_margin,
-            default_color=self.parameters.color_default,
-            default_outline_color=self.parameters.color_outline,
-            font=self.parameters.font_default,
-            gap_x=self.parameters.window_gap,
-            gap_y=self.parameters.window_gap,
-            update_interval=self.parameters.interval_refresh,
-            minimum_width=self.parameters.window_width_min,
-            minimum_height=self.parameters.window_height_min,
-        )
-        lines.append('conky.config = {')
-        count = 0
-        for name, value in config_dict.items():
-            if count > 0:
-                lines[-1] += ','
-            if isinstance(value, str):
-                value_string = f"'{value}'"
-            elif isinstance(value, bool):
-                value_string = str(value).lower()
-            else:
-                value_string = str(value)
-            lines.append(f'    {name} = {value_string}')
-            count += 1
-        lines.append('}')
-        return os.linesep.join(lines)
-
-    def conky_text_section(self) -> str:
-        """
-        Generate full Conky text block, including wrapper lines.
-
-        :return: output string
-        """
-        return os.linesep.join([
+def _generate(conky: ConkyMaker) -> str:
+    sections: List[str] = []
+    config_lines: List[str] = ['conky.config = {']
+    config_dict = dict(
+        BASE_CONFIGURATION,
+        alignment=conky.placement,
+        border_outer_margin=conky.window_outer_margin,
+        default_color=conky.default_color,
+        default_outline_color=conky.default_color_outline,
+        font=conky.default_font,
+        gap_x=conky.window_gap,
+        gap_y=conky.window_gap,
+        update_interval=conky.refresh_interval,
+        minimum_width=conky.window_width_min,
+        minimum_height=conky.window_height_min,
+    )
+    config_item_count = 0
+    for name, value in config_dict.items():
+        if config_item_count > 0:
+            config_lines[-1] += ','
+        if isinstance(value, str):
+            value_string = f"'{value}'"
+        elif isinstance(value, bool):
+            value_string = str(value).lower()
+        else:
+            value_string = str(value)
+        config_lines.append(f'    {name} = {value_string}')
+        config_item_count += 1
+    config_lines.append('}')
+    sections.append(
+        os.linesep.join(config_lines)
+    )
+    sections.append(
+        os.linesep.join([
             'conky.text = [[',
-            *self.conky_text_lines,
+            os.linesep.join(conky.lines),
             ']]',
         ])
-
-    def generate_conky_configuration(self) -> str:
-        """
-        Generate full Conky configuration, wrapped configuration and text sections.
-
-        :return: output string
-        """
-        return (os.linesep * 2).join([
-            self.conky_config_section(),
-            self.conky_text_section(),
-        ])
+    )
+    return (os.linesep * 2).join(sections)
 
 
 def main():
@@ -915,13 +891,21 @@ def main():
     module_spec = spec_from_file_location('design', args.DESIGN_PATH)
     design_module = module_from_spec(module_spec)
     module_spec.loader.exec_module(design_module)
-    if not hasattr(design_module, 'render'):
-        abort(f'Design module missing render() function: {args.DESIGN_PATH}')
 
     # Render the conky configuration text.
-    formatter = ConkyFormatter(parameters)
-    getattr(design_module, 'render')(parameters, formatter)
-    print(formatter.generate_conky_configuration())
+    maker_class = getattr(design_module, 'Maker', None)
+    if maker_class is None:
+        abort(f'Design module has no ConkyMaker subclass named "Maker":'
+              f' {args.DESIGN_PATH}')
+    conky = maker_class(parameters)
+    conky.configure_conky(placement=parameters.geometry.placement,
+                          window_width_min=parameters.geometry.width_min,
+                          window_height_min=parameters.geometry.height_min,
+                          window_outer_margin=parameters.geometry.outer_margin,
+                          window_gap=parameters.geometry.gap)
+    conky.render()
+
+    print(_generate(conky))
 
 
 if __name__ == '__main__':

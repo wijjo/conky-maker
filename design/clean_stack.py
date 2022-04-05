@@ -13,95 +13,178 @@
 # You should have received a copy of the GNU General Public License
 # along with wijjet.  If not, see <https://www.gnu.org/licenses/>.
 
-from conky import ConfigDict, ConkyFormatter, ConkyFormatterParameters
+from typing import Any, List, Union
+
+from conky import ConkyMaker
+
+COLORS = {
+    'default': '404040',
+    'outline': '808080',
+    'graph_border': '404040',
+    'heading': '80c0c0',
+    'label': 'b0b080',
+    'value': 'f0f0a0',
+    'time': 'a00000',
+    'date': 'a07000',
+    'cpu': 'a0a000',
+    'memory': '008000',
+    'filesystem': '006060',
+}
+
+FONTS = {
+    'default': 'Montserrat:size=10',
+    'heading': 'Montserrat:size=11',
+    'label': 'Montserrat:size=9',
+    'value': 'MesloLGS NF-Bold:size=9',
+    'time': 'MesloLGS NF-Bold:size=44',
+    'date': 'Montserrat:size=14',
+}
+
+FORMATS = {
+    'time': '%H:%M',
+    'date': '%a %d %b %Y',
+}
 
 
-def render(parameters: ConfigDict, conky: ConkyFormatter):
+class Maker(ConkyMaker):
 
-    conky.set_parameters(
-        ConkyFormatterParameters(
-            color_default='404040',
-            color_outline='808080',
-            color_graph_border='404040',
-            color_heading='80c0c0',
-            color_label='b0b080',
-            color_data='f0f0a0',
-            color_time='a00000',
-            color_date='a07000',
-            color_cpu='a0a000',
-            color_memory='008000',
-            color_filesystem='006060',
-            font_default='Montserrat:size=10',
-            font_heading='Montserrat:size=11',
-            font_label='Montserrat:size=9',
-            font_data='MesloLGS NF-Bold:size=9',
-            font_time='MesloLGS NF-Bold:size=44',
-            font_date='Montserrat:size=14',
-            format_time='%H:%M',
-            format_date='%a %d %b %Y',
+    meter_height = 25
+    bar_height = 10
+
+    def block(self, *items: Union[str, list, tuple], heading: str = None):
+        import sys
+        sys.stderr.write(f'{heading=}\n')
+        if self.lines:
+            self.line('')
+        if heading is not None:
+            heading_text_fields = []
+            if heading:
+                heading_text_fields.extend([self.font('heading'), heading, ' '])
+            self.line(self.color('heading'), *heading_text_fields, self.horizontal_rule())
+        for item in items:
+            self.line(''.join(item) if isinstance(item, (tuple, list)) else item)
+
+    def label_value_pair(self, label: str, value: Any) -> List[str]:
+        return [
+            self.color('label'),
+            self.font('label'),
+            self.text(label),
+            self.color('value'),
+            self.font('value'),
+            self.right(),
+            self.text(value),
+        ]
+
+    def render(self):
+
+        self.color_theme(COLORS)
+        self.font_theme(FONTS)
+
+        self.block(
+            (
+                self.color('time'),
+                self.font('time'),
+                self.center(),
+                self.time_date(FORMATS['time']),
+            ),
+            '',
+            (
+                self.color('date'),
+                self.font('date'),
+                self.center(),
+                self.time_date(FORMATS['date']),
+            ),
         )
-    )
 
-    conky.block(
-        conky.time_line(),
-        '',
-        conky.date_line(),
-    )
-
-    conky.block(
-        conky.name_value_line('Host:', conky.host_name()),
-        conky.name_value_line('Kernel:', conky.kernel()),
-        conky.name_value_line('Uptime:', conky.uptime(short=True)),
-        conky.name_value_line('External IP:', conky.external_ip()),
-        heading='SYSTEM',
-    )
-
-    for network in parameters.networks:
-        conky.block(
-            conky.name_value_line(conky.mac_address(network.device),
-                                  conky.ip_address(network.device)),
-            heading=f'NET: {network.device}',
+        self.block(
+            self.label_value_pair('Host:', self.host_name()),
+            self.label_value_pair('Kernel:', self.kernel()),
+            self.label_value_pair('Uptime:', self.uptime(short=True)),
+            self.label_value_pair('External IP:', self.external_ip()),
+            heading='SYSTEM',
         )
 
-    for cpu in parameters.cpus:
-        conky.block(
-            conky.centered_line(conky.cpu_meter(cpu.cpu_number)),
-            conky.triplet_line(conky.cpu_percent(cpu.cpu_number),
-                               conky.cpu_frequency(),
-                               conky.cpu_temperature(cpu.cpu_number)),
-            heading=f'CPU: {cpu.label}',
+        for network in self.parameters.networks:
+            self.block(
+                self.label_value_pair(self.mac_address(network.device),
+                                      self.ip_address(network.device)),
+                heading=f'NET: {network.device}',
+            )
+
+        for cpu in self.parameters.cpus:
+            self.block(
+                (
+                    self.center(),
+                    self.cpu_meter(cpu.cpu_number,
+                                   width=self.parameters.geometry.width_min,
+                                   height=self.meter_height,
+                                   graph_color1='cpu',
+                                   graph_color2='cpu',
+                                   border_color='cpu'),
+                ),
+                (
+                    self.color('value'),
+                    self.font('value'),
+                    self.cpu_percent(cpu.cpu_number),
+                    self.center(),
+                    self.cpu_frequency(),
+                    self.right(),
+                    self.cpu_temperature(cpu.cpu_number),
+                ),
+                heading=f'CPU: {cpu.label}',
+            )
+
+        self.block(
+            (
+                self.center(),
+                self.memory_bar(width=self.parameters.geometry.width_min,
+                                height=self.bar_height,
+                                color='memory'),
+            ),
+            self.label_value_pair('Usage:', self.memory_usage_triplet()),
+            self.label_value_pair('Swap:', self.swap_usage_triplet()),
+            heading='MEMORY',
         )
 
-    conky.block(
-        conky.centered_line(conky.memory_bar()),
-        conky.name_value_line('Usage:', conky.memory_usage()),
-        conky.name_value_line('Swap:', conky.swap_usage()),
-        heading='MEMORY',
-    )
+        for fs in self.parameters.filesystems:
+            self.block(
+                (
+                    self.center(),
+                    self.filesystem_bar(fs.mountpoint,
+                                        width=self.parameters.geometry.width_min,
+                                        height=self.bar_height,
+                                        color='filesystem',
+                                        ),
+                ),
+                self.label_value_pair('Usage:',
+                                      self.filesystem_usage_triplet(fs.mountpoint)),
+                (
+                    self.center(),
+                    self.filesystem_io_meter(fs.device,
+                                             width=self.parameters.geometry.width_min,
+                                             height=self.meter_height,
+                                             graph_color1='filesystem',
+                                             graph_color2='filesystem',
+                                             border_color='filesystem'),
+                ),
+                self.label_value_pair('I/O:', self.filesystem_io(fs.mountpoint)),
+                heading=f'FS: {fs.mountpoint}',
+            )
 
-    for fs in parameters.filesystems:
-        conky.block(
-            conky.centered_line(conky.filesystem_bar(fs.mountpoint)),
-            conky.name_value_line('Usage:', conky.filesystem_usage(fs.mountpoint)),
-            conky.centered_line(conky.filesystem_io_meter(fs.device)),
-            conky.name_value_line('I/O:', conky.filesystem_io(fs.mountpoint)),
-            heading=f'FS: {fs.mountpoint}',
+        self.block(
+            *[
+                self.label_value_pair(self.cpu_top_name(top_number),
+                                      self.cpu_top_percent(top_number))
+                for top_number in range(1, self.parameters.processes.top_cpu_count + 1)
+            ],
+            heading='TOP: CPU',
         )
 
-    conky.block(
-        [
-            conky.name_value_line(conky.cpu_top_name(top_number),
-                                  conky.cpu_top_percent(top_number))
-            for top_number in range(1, parameters.cpu_top_processes + 1)
-        ],
-        heading='TOP: CPU',
-    )
-
-    conky.block(
-        [
-            conky.name_value_line(conky.memory_top_name(top_number),
-                                  conky.memory_top_percent(top_number))
-            for top_number in range(1, parameters.memory_top_processes + 1)
-        ],
-        heading='TOP: MEMORY',
-    )
+        self.block(
+            *[
+                self.label_value_pair(self.memory_top_name(top_number),
+                                      self.memory_top_percent(top_number))
+                for top_number in range(1, self.parameters.processes.top_memory_count + 1)
+            ],
+            heading='TOP: MEMORY',
+        )
